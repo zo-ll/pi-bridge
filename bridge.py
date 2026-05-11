@@ -117,7 +117,7 @@ class PiProcess:
             cmd["id"] = req_id
             fut = asyncio.Future()
             self._pending[req_id] = fut
-            self.proc.stdin.write(json.dumps(cmd) + "\n")
+            self.proc.stdin.write((json.dumps(cmd) + "\n").encode())
             await self.proc.stdin.drain()
         try:
             return await asyncio.wait_for(fut, timeout=10)
@@ -129,22 +129,37 @@ class PiProcess:
         """Send a prompt and wait for the full text response."""
         async with self._lock:
             if not self.proc or self.proc.returncode is not None:
+                print(f"[bridge] Starting pi subprocess...", flush=True)
                 await self.start()
-            assert self.proc and self.proc.stdin
+                print(f"[bridge] Pi started (pid={self.proc.pid})", flush=True)
+            if not self.proc:
+                raise RuntimeError("self.proc is None")
+            if self.proc.stdin is None:
+                raise RuntimeError(
+                    f"self.proc.stdin is None! proc.pid={self.proc.pid}, "
+                    f"proc.returncode={self.proc.returncode}, "
+                    f"proc.stdout={self.proc.stdout}, "
+                    f"proc.stderr={self.proc.stderr}"
+                )
             fut = asyncio.Future()
             self._prompt_futures.append(fut)
             cmd = json.dumps({"type": "prompt", "message": message})
-            self.proc.stdin.write(cmd + "\n")
+            print(f"[bridge] Sending prompt: {cmd}", flush=True)
+            self.proc.stdin.write((cmd + "\n").encode())
             await self.proc.stdin.drain()
+            print(f"[bridge] Prompt sent, waiting for response...", flush=True)
         try:
-            return await asyncio.wait_for(fut, timeout=300)
+            result = await asyncio.wait_for(fut, timeout=300)
+            print(f"[bridge] Got response ({len(result)} chars)", flush=True)
+            return result
         except TimeoutError:
+            print(f"[bridge] Timed out waiting for response", flush=True)
             return "⌛ Timed out waiting for response."
 
     async def abort(self):
         if self.proc and self.proc.returncode is None:
             async with self._lock:
-                self.proc.stdin.write(json.dumps({"type": "abort"}) + "\n")
+                self.proc.stdin.write((json.dumps({"type": "abort"}) + "\n").encode())
                 await self.proc.stdin.drain()
 
     async def get_models(self) -> list[dict]:
@@ -287,6 +302,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = await pi.prompt(text)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         await status_msg.edit_text(f"❌ Error: {e}")
         return
 
