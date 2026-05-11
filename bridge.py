@@ -165,6 +165,10 @@ class PiProcess:
                 self.proc.stdin.write((json.dumps({"type": "abort"}) + "\n").encode())
                 await self.proc.stdin.drain()
 
+    async def new_session(self) -> bool:
+        resp = await self._send({"type": "new_session"})
+        return resp is not None and resp.get("success", False)
+
     async def get_models(self) -> list[dict]:
         resp = await self._send({"type": "get_available_models"})
         if resp and resp.get("success") and resp.get("data"):
@@ -286,6 +290,15 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Agent not responding.")
 
 # ── Command: /abort ───────────────────────────────────────────────────────────
+
+async def new_session_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+    ok = await pi.new_session()
+    if ok:
+        await update.message.reply_text("🆕 *New session started\\.*", parse_mode=ParseMode.MARKDOWN_V2)
+    else:
+        await update.message.reply_text("⚠️ Failed to start new session\\.", parse_mode=ParseMode.MARKDOWN_V2)
 
 async def abort_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update):
@@ -446,6 +459,7 @@ def main():
     app.add_handler(CommandHandler("model", model_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("thinking", thinking_cmd))
+    app.add_handler(CommandHandler("new", new_session_cmd))
     app.add_handler(CommandHandler("abort", abort_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
