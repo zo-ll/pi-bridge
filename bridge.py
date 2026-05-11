@@ -13,6 +13,9 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
+from faster_whisper import WhisperModel
+WHISPER_MODEL = WhisperModel("base", device="cpu", compute_type="int8")
+
 # ── Config ────────────────────────────────────────────────────────────────────
 TOKEN_FILE = Path("/root/.pi/agent/telegram-token")
 SETTINGS_FILE = Path("/root/.pi/agent/settings.json")
@@ -172,6 +175,10 @@ class PiProcess:
         resp = await self._send({"type": "set_model", "provider": provider, "modelId": model_id})
         return resp is not None and resp.get("success", False)
 
+    async def set_thinking(self, level: str) -> bool:
+        resp = await self._send({"type": "set_thinking_level", "level": level})
+        return resp is not None and resp.get("success", False)
+
     async def get_state(self) -> dict | None:
         resp = await self._send({"type": "get_state"})
         if resp and resp.get("success"):
@@ -286,6 +293,44 @@ async def abort_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await pi.abort()
     await update.message.reply_text("✋ Abort sent.")
 
+# ── Command: /thinking ────────────────────────────────────────────────────────
+
+async def thinking_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+
+    args = context.args
+    settings = read_settings()
+    levels = ["off", "minimal", "low", "medium", "high", "xhigh"]
+
+    if not args:
+        current = settings.get("thinking", "medium")
+        await update.message.reply_text(
+            f"🧠 *Current thinking:* `{current}`\n\n"
+            f"Levels: `off` | `minimal` | `low` | `medium` | `high` | `xhigh`\n\n"
+            f"Use `/thinking off` to disable\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    level = args[0].lower()
+    if level not in levels:
+        await update.message.reply_text(
+            f"❌ Unknown level \"{level}\"\\. Use: `off` | `minimal` | `low` | `medium` | `high` | `xhigh`",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    ok = await pi.set_thinking(level)
+    if ok:
+        settings["thinking"] = level
+        write_settings(settings)
+        await update.message.reply_text(
+            f"✅ Thinking set to *{level}*\\.", parse_mode=ParseMode.MARKDOWN_V2
+        )
+    else:
+        await update.message.reply_text("❌ Failed to set thinking level\\.", parse_mode=ParseMode.MARKDOWN_V2)
+
 # ── Message handler ───────────────────────────────────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -333,6 +378,64 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                        .replace("!", "\\!")
             await update.message.reply_text(esc, parse_mode=ParseMode.MARKDOWN_V2)
 
+# ── Voice handler ─────────────────────────────────────────────────────────────
+
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        await update.message.reply_text("🔒 Access denied\.")
+        return
+
+    voice = update.message.voice
+    status_msg = await update.message.reply_text("🎤 Transcribing\.\.\.", parse_mode=ParseMode.MARKDOWN_V2)
+
+    try:
+        file = await voice.get_file()
+        voice_path = "/tmp/voice_msg.ogg"
+        await file.download_to_drive(voice_path)
+
+        segments, info = WHISPER_MODEL.transcribe(voice_path, language=None)
+        text = " ".join([seg.text.strip() for seg in segments]).strip()
+
+        os.remove(voice_path)
+
+        if not text:
+            await status_msg.edit_text("⚠️ Could not understand audio\\.")
+            return
+
+        await status_msg.edit_text(f"🗣️ *Heard:* `{text}`", parse_mode=ParseMode.MARKDOWN_V2)
+
+        # Now send to pi
+        thinking_msg = await update.message.reply_text("🤔 Thinking\.\.\.", parse_mode=ParseMode.MARKDOWN_V2)
+        response = await pi.prompt(text)
+
+        if response.startswith("⌛"):
+            await thinking_msg.edit_text(response)
+            return
+        if not response:
+            await thinking_msg.edit_text("⚠️ No response\.")
+            return
+
+        await thinking_msg.delete()
+
+        for chunk in textwrap.wrap(
+            response, width=3800, replace_whitespace=False,
+            drop_whitespace=False, break_long_words=False
+        ):
+            if chunk.strip():
+                esc = chunk.replace("\\", "\\\\").replace("_", "\\_").replace("*", "\\*")\
+                           .replace("[", "\\[").replace("]", "\\]").replace("(", "\\(")\
+                           .replace(")", "\\)").replace("~", "\\~").replace("`", "\\`")\
+                           .replace(">", "\\>").replace("#", "\\#").replace("+", "\\+")\
+                           .replace("-", "\\-").replace("=", "\\=").replace("|", "\\|")\
+                           .replace("{", "\\{").replace("}", "\\}").replace(".", "\\.")\
+                           .replace("!", "\\!")
+                await update.message.reply_text(esc, parse_mode=ParseMode.MARKDOWN_V2)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        await status_msg.edit_text(f"❌ Error: {e}")
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -342,8 +445,10 @@ def main():
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("model", model_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("thinking", thinking_cmd))
     app.add_handler(CommandHandler("abort", abort_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     # Start pi subprocess
     async def on_startup(app):
