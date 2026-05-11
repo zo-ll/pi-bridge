@@ -203,25 +203,25 @@ def authorized(update: Update) -> bool:
 # ── Command: /start ───────────────────────────────────────────────────────────
 
 HELP_TEXT = (
-    "🤖 **Pi Agent** — available commands:\n\n"
-    "📋 `/help` — this message\n"
-    "🆕 `/new` — start a fresh session\n"
-    "🗑️ `/clear` — delete old session files\n"
-    "🗑️ `/clear all` — delete *all* session files\n"
-    "🧠 `/model` — list available models\n"
-    "🧠 `/model <name>` — switch model (fuzzy match)\n"
-    "💭 `/thinking` — show current thinking level\n"
-    "💭 `/thinking off` — disable thinking\n"
-    "💻 `/status` — check agent health\n"
-    "✋ `/abort` — cancel current task\n\n"
-    "Send text or voice messages to chat with the agent\."
+    "🤖 *Pi Agent* — available commands:\n\n"
+    "📋 /help — this message\n"
+    "🆕 /new — start a fresh session\n"
+    "🗑️ /clear — delete old session files\n"
+    "🗑️ /clear all — delete ALL session files\n"
+    "🧠 /model — list available models\n"
+    "🧠 /model [name] — switch model (fuzzy match)\n"
+    "💭 /thinking — show current thinking level\n"
+    "💭 /thinking off — disable thinking\n"
+    "💻 /status — check agent health\n"
+    "✋ /abort — cancel current task\n\n"
+    "Send text or voice messages to chat with the agent."
 )
 
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(HELP_TEXT)
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.MARKDOWN_V2)
+    await update.message.reply_text(HELP_TEXT)
 
 # ── Command: /model ───────────────────────────────────────────────────────────
 
