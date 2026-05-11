@@ -329,16 +329,16 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Start pi subprocess
-    async def startup():
+    async def on_startup(app):
         await pi.start()
         print("Bridge started.", flush=True)
 
-    async def shutdown():
+    async def on_shutdown(app):
         await pi.stop()
         print("Bridge stopped.", flush=True)
 
-    app.post_init = lambda app: asyncio.create_task(startup())
-    app.post_shutdown = shutdown
+    app.post_init = on_startup
+    app.post_shutdown = on_shutdown
 
     print("Bot starting...", flush=True)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
