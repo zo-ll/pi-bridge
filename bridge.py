@@ -202,15 +202,26 @@ def authorized(update: Update) -> bool:
 
 # ── Command: /start ───────────────────────────────────────────────────────────
 
+HELP_TEXT = (
+    "🤖 **Pi Agent** — available commands:\n\n"
+    "📋 `/help` — this message\n"
+    "🆕 `/new` — start a fresh session\n"
+    "🗑️ `/clear` — delete old session files\n"
+    "🗑️ `/clear all` — delete *all* session files\n"
+    "🧠 `/model` — list available models\n"
+    "🧠 `/model <name>` — switch model (fuzzy match)\n"
+    "💭 `/thinking` — show current thinking level\n"
+    "💭 `/thinking off` — disable thinking\n"
+    "💻 `/status` — check agent health\n"
+    "✋ `/abort` — cancel current task\n\n"
+    "Send text or voice messages to chat with the agent\."
+)
+
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 **Pi Agent** ready\\.\n\n"
-        "Send me a prompt and I'll work on it\\.\n\n"
-        "/model — list or switch models\n"
-        "/status — check agent health\n"
-        "/abort — cancel current task",
-        parse_mode=ParseMode.MARKDOWN_V2,
-    )
+    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.MARKDOWN_V2)
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(HELP_TEXT, parse_mode=ParseMode.MARKDOWN_V2)
 
 # ── Command: /model ───────────────────────────────────────────────────────────
 
@@ -299,6 +310,49 @@ async def new_session_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🆕 *New session started\\.*", parse_mode=ParseMode.MARKDOWN_V2)
     else:
         await update.message.reply_text("⚠️ Failed to start new session\\.", parse_mode=ParseMode.MARKDOWN_V2)
+
+async def clear_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update):
+        return
+
+    args = context.args
+    session_dir = Path("/root/.pi/agent/sessions")
+    files = list(session_dir.glob("*.jsonl"))
+
+    if not files:
+        await update.message.reply_text("🗑️ No session files found\\.")
+        return
+
+    if args and args[0].lower() == "all":
+        total = sum(f.stat().st_size for f in files)
+        for f in files:
+            f.unlink()
+        await update.message.reply_text(
+            f"🗑️ Deleted *{len(files)}* session file(s), freed *{total / 1024:.0f} KB*\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
+    # Default: delete all except current
+    state = await pi.get_state()
+    current_file = None
+    if state:
+        current_file = state.get("sessionFile")
+
+    deleted = 0
+    freed = 0
+    for f in files:
+        if current_file and str(f) == current_file:
+            continue
+        freed += f.stat().st_size
+        f.unlink()
+        deleted += 1
+
+    msg = f"🗑️ Deleted *{deleted}* old session file(s), freed *{freed / 1024:.0f} KB*\\."
+    if current_file:
+        msg += "\nCurrent session kept\\."
+    msg += "\n\nUse `/clear all` to delete *everything*\\."
+    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
 
 async def abort_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update):
@@ -456,10 +510,12 @@ def main():
     app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("start", start_cmd))
+    app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("model", model_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("thinking", thinking_cmd))
     app.add_handler(CommandHandler("new", new_session_cmd))
+    app.add_handler(CommandHandler("clear", clear_cmd))
     app.add_handler(CommandHandler("abort", abort_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
