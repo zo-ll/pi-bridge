@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
@@ -22,6 +23,24 @@ SETTINGS_FILE = Path("/root/.pi/agent/settings.json")
 ALLOWED_USERS = set(
     int(uid) for uid in os.environ.get("ALLOWED_USERS", "").split(",") if uid
 )
+ALLOW_UNRESTRICTED = os.environ.get("ALLOW_UNRESTRICTED") == "1"
+
+def require_access_control_configured():
+    """Refuse to start wide open. Unrestricted access must be an explicit opt-in."""
+    if ALLOWED_USERS:
+        return
+    if ALLOW_UNRESTRICTED:
+        print(
+            "[bridge] WARNING: ALLOW_UNRESTRICTED=1 set, no ALLOWED_USERS — "
+            "anyone who finds this bot can drive the agent.",
+            file=sys.stderr, flush=True,
+        )
+        return
+    sys.exit(
+        "ALLOWED_USERS is not set. Refusing to start with unrestricted access.\n"
+        "Set ALLOWED_USERS to a comma-separated list of Telegram user IDs, "
+        "or set ALLOW_UNRESTRICTED=1 to explicitly allow anyone to use this bot."
+    )
 
 def read_token() -> str:
     return TOKEN_FILE.read_text().strip()
@@ -196,7 +215,7 @@ pi = PiProcess()
 
 def authorized(update: Update) -> bool:
     if not ALLOWED_USERS:
-        return True
+        return ALLOW_UNRESTRICTED
     uid = update.effective_user.id if update.effective_user else 0
     return uid in ALLOWED_USERS
 
@@ -455,15 +474,14 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     voice = update.message.voice
     status_msg = await update.message.reply_text("🎤 Transcribing\.\.\.", parse_mode=ParseMode.MARKDOWN_V2)
 
+    voice_fd, voice_path = tempfile.mkstemp(suffix=".ogg", prefix="voice_msg_")
+    os.close(voice_fd)
     try:
         file = await voice.get_file()
-        voice_path = "/tmp/voice_msg.ogg"
         await file.download_to_drive(voice_path)
 
         segments, info = WHISPER_MODEL.transcribe(voice_path, language=None)
         text = " ".join([seg.text.strip() for seg in segments]).strip()
-
-        os.remove(voice_path)
 
         if not text:
             await status_msg.edit_text("⚠️ Could not understand audio\\.")
@@ -502,10 +520,13 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import traceback
         traceback.print_exc()
         await status_msg.edit_text(f"❌ Error: {e}")
+    finally:
+        Path(voice_path).unlink(missing_ok=True)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    require_access_control_configured()
     token = read_token()
     app = Application.builder().token(token).build()
 

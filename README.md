@@ -52,10 +52,9 @@ ALLOWED_USERS="123456789" python3 bridge.py
 
 # Multi-user
 ALLOWED_USERS="123456789,987654321" python3 bridge.py
-
-# No restriction (anyone can use your bot)
-python3 bridge.py
 ```
+
+The bridge refuses to start if `ALLOWED_USERS` is unset — see [Security](#security) below.
 
 ## Telegram commands
 
@@ -73,6 +72,11 @@ python3 bridge.py
 - `bridge.py` — the whole thing (~500 lines)
 - `~/.pi/agent/telegram-token` — bot token
 - `~/.pi/agent/settings.json` — persisted model/provider selection
+
+## Security
+
+- **Access control is default-deny.** The bridge refuses to start unless `ALLOWED_USERS` is set. To run it open to anyone (not recommended), set `ALLOW_UNRESTRICTED=1` explicitly — this is opt-in on purpose, so an unset env var can't silently hand out agent access.
+- **There is no approval/confirmation layer between Telegram and agent actions.** Every message from an allowed user is forwarded straight to `pi`'s RPC mode as a prompt, and Pi's RPC protocol has no approval/policy concept for tool calls — `bash`, `edit`, and `write` tool invocations run immediately with no round-trip confirmation. `ALLOWED_USERS` is the *only* safety net. If you wouldn't give someone a shell on this host, don't give them access to this bot. (This is a gap in Pi's RPC surface itself, not something this bridge can currently paper over — see [pi-coding-agent](https://github.com/earendil-works/pi-coding-agent) if that changes.)
 
 ## Requirements
 
